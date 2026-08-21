@@ -13,7 +13,8 @@ import {
   Loader2,
   ShieldAlert,
 } from "lucide-react";
-import { isAuthenticated } from "@/lib/auth";
+import { clearAuthSession, isAuthenticated } from "@/lib/auth";
+import PortalHeader from "@/app/components/PortalHeader";
 
 interface Clinic {
   id: string;
@@ -28,6 +29,10 @@ export default function ProtectedClinicsPage() {
   const [clinics, setClinics] = useState<Clinic[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [navigatingClinicId, setNavigatingClinicId] = useState<string | null>(
+    null,
+  );
   const router = useRouter();
 
   const API_URL =
@@ -43,9 +48,20 @@ export default function ProtectedClinicsPage() {
       fetch(`${API_URL}/clinics`, {
         headers: { Authorization: `Bearer ${token}` },
       })
-        .then((res) => res.json())
+        .then(async (res) => {
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Unable to load clinics.");
+          return data;
+        })
         .then((data) => {
           if (Array.isArray(data)) setClinics(data);
+        })
+        .catch((requestError: Error) => {
+          setError(requestError.message);
+          if (requestError.message.toLowerCase().includes("token")) {
+            clearAuthSession();
+            router.push("/login?redirect=/clinics");
+          }
         })
         .finally(() => setLoading(false));
     }
@@ -111,6 +127,7 @@ export default function ProtectedClinicsPage() {
   // 2. Full Clinic Directory View (When Authenticated)
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-6 md:p-12 max-w-6xl mx-auto">
+      <PortalHeader />
       <header className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-extrabold bg-gradient-to-r from-teal-400 to-blue-500 bg-clip-text text-transparent">
@@ -143,6 +160,10 @@ export default function ProtectedClinicsPage() {
               className="h-48 bg-slate-900/60 animate-pulse rounded-2xl border border-slate-800/50"
             />
           ))}
+        </div>
+      ) : error ? (
+        <div className="p-12 bg-slate-900 border border-red-900/50 rounded-2xl text-center text-red-300 text-sm">
+          {error}
         </div>
       ) : filteredClinics.length === 0 ? (
         <div className="p-12 bg-slate-900 border border-slate-800 rounded-2xl text-center text-slate-500 text-sm">
@@ -185,10 +206,21 @@ export default function ProtectedClinicsPage() {
                 </span>
 
                 <button
-                  onClick={() => router.push(`/book/${clinic.id}`)}
-                  className="px-4 py-2 bg-teal-500 text-slate-950 font-semibold text-xs rounded-xl hover:bg-teal-400 transition-colors flex items-center gap-1.5"
+                  onClick={() => {
+                    setNavigatingClinicId(clinic.id);
+                    router.push(`/book/${clinic.id}`);
+                  }}
+                  disabled={navigatingClinicId !== null}
+                  className="px-4 py-2 bg-teal-500 text-slate-950 font-semibold text-xs rounded-xl hover:bg-teal-400 transition-colors flex items-center gap-1.5 disabled:cursor-wait disabled:opacity-60"
                 >
-                  Book Slot <ArrowRight className="w-3.5 h-3.5" />
+                  {navigatingClinicId === clinic.id ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  )}
+                  {navigatingClinicId === clinic.id
+                    ? "Opening..."
+                    : "Book Slot"}
                 </button>
               </div>
             </motion.div>

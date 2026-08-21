@@ -1,8 +1,8 @@
-'use client';
+"use client";
 
-import { useState, useEffect } from 'react';
-import Link from 'next/link';
-import { motion } from 'framer-motion';
+import { useState, useEffect } from "react";
+import Link from "next/link";
+import { motion } from "framer-motion";
 
 interface Clinic {
   id: string;
@@ -15,9 +15,18 @@ export default function LandingPage() {
   const [clinics, setClinics] = useState<Clinic[]>([]);
 
   useEffect(() => {
-    fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1'}/clinics`)
+    const token = localStorage.getItem("jwt_token");
+
+    fetch(
+      `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api/v1"}/clinics`,
+      {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      },
+    )
       .then((res) => res.json())
-      .then((data) => setClinics(data))
+      .then((data) => {
+        if (Array.isArray(data)) setClinics(data);
+      })
       .catch((err) => console.error(err));
   }, []);
 
@@ -28,17 +37,23 @@ export default function LandingPage() {
           PulseBook
         </div>
         <div className="space-x-4">
-          <Link href="/login" className="px-4 py-2 text-sm rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700">
+          <Link
+            href="/login"
+            className="px-4 py-2 text-sm rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700"
+          >
             Sign In
           </Link>
-          <Link href="/admin/dashboard" className="px-4 py-2 text-sm rounded-lg bg-teal-500 text-slate-950 font-semibold hover:bg-teal-400">
+          <Link
+            href="/admin/dashboard"
+            className="px-4 py-2 text-sm rounded-lg bg-teal-500 text-slate-950 font-semibold hover:bg-teal-400"
+          >
             Admin Portal
           </Link>
         </div>
       </header>
 
       <main className="max-w-4xl mx-auto w-full my-auto text-center py-12">
-        <motion.h1 
+        <motion.h1
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
           className="text-4xl sm:text-6xl font-extrabold tracking-tight mb-4"
@@ -49,7 +64,8 @@ export default function LandingPage() {
           </span>
         </motion.h1>
         <p className="text-slate-400 text-lg mb-12 max-w-2xl mx-auto">
-          Select a healthcare facility below to explore available consultation slots with dynamic hold reservation.
+          Select a healthcare facility below to explore available consultation
+          slots with dynamic hold reservation.
         </p>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 text-left">
@@ -60,7 +76,9 @@ export default function LandingPage() {
               className="p-6 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col justify-between"
             >
               <div>
-                <h3 className="text-xl font-semibold text-slate-100">{clinic.name}</h3>
+                <h3 className="text-xl font-semibold text-slate-100">
+                  {clinic.name}
+                </h3>
                 <p className="text-slate-400 text-sm mt-2">{clinic.address}</p>
               </div>
               <Link
@@ -75,7 +93,7 @@ export default function LandingPage() {
       </main>
 
       <footer className="text-center text-slate-600 text-xs py-4">
-        PulseBook Architecture • Multi-Tenant Isolation & Hold Locks
+        Built by Nsikak Imeh-Essien
       </footer>
     </div>
   );

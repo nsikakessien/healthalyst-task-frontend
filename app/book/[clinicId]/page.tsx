@@ -5,14 +5,17 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Calendar as CalendarIcon,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   CheckCircle2,
   AlertCircle,
   Loader2,
   User,
-  ChevronRight,
   Lock,
 } from "lucide-react";
+import PortalHeader from "@/app/components/PortalHeader";
+import { clearAuthSession } from "@/lib/auth";
 
 interface Slot {
   id: string;
@@ -21,6 +24,44 @@ interface Slot {
   isBooked: boolean;
   lockedUntil: string | null;
 }
+
+interface PatientDetails {
+  phone: string;
+  dateOfBirth: string;
+  reason: string;
+}
+
+const padDatePart = (value: number) => value.toString().padStart(2, "0");
+
+const dateKey = (date: Date) =>
+  `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}`;
+
+const dateFromKey = (value: string) => new Date(`${value}T12:00:00`);
+
+const monthTitle = (date: Date) =>
+  date.toLocaleDateString([], { month: "long", year: "numeric" });
+
+const monthNames = Array.from({ length: 12 }, (_, month) =>
+  new Date(2024, month, 1).toLocaleDateString([], { month: "long" }),
+);
+
+const calendarDays = (month: Date) => {
+  const firstDay = new Date(month.getFullYear(), month.getMonth(), 1);
+  const daysInMonth = new Date(
+    month.getFullYear(),
+    month.getMonth() + 1,
+    0,
+  ).getDate();
+  const leadingDays = firstDay.getDay();
+
+  return [
+    ...Array.from({ length: leadingDays }, () => null),
+    ...Array.from(
+      { length: daysInMonth },
+      (_, index) => new Date(month.getFullYear(), month.getMonth(), index + 1),
+    ),
+  ];
+};
 
 export default function EnhancedBookingPage({
   params,
@@ -35,6 +76,15 @@ export default function EnhancedBookingPage({
   const [holding, setHolding] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [bookingSuccess, setBookingSuccess] = useState(false);
+  const [slotsError, setSlotsError] = useState("");
+  const [appointmentMonth, setAppointmentMonth] = useState(new Date());
+  const [dobMonth, setDobMonth] = useState(new Date());
+  const [dobPickerOpen, setDobPickerOpen] = useState(false);
+  const [patientDetails, setPatientDetails] = useState<PatientDetails>({
+    phone: "",
+    dateOfBirth: "",
+    reason: "",
+  });
 
   const router = useRouter();
   const API_URL =
@@ -43,17 +93,34 @@ export default function EnhancedBookingPage({
   // 1. Fetch Slots
   useEffect(() => {
     setLoadingSlots(true);
-    fetch(`${API_URL}/clinics/${params.clinicId}/slots`)
-      .then((res) => res.json())
+    const token = localStorage.getItem("jwt_token");
+    fetch(`${API_URL}/clinics/${params.clinicId}/slots`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok)
+          throw new Error(data.error || "Unable to load appointment slots.");
+        return data;
+      })
       .then((data: Slot[]) => {
-        setSlots(data);
+        setSlots(Array.isArray(data) ? data : []);
         if (data.length > 0) {
           const firstAvailable = data.find((s) => !s.isBooked);
           if (firstAvailable) {
-            setSelectedDate(
-              new Date(firstAvailable.startTime).toISOString().split("T")[0],
+            const firstDate = new Date(firstAvailable.startTime);
+            setSelectedDate(dateKey(firstDate));
+            setAppointmentMonth(
+              new Date(firstDate.getFullYear(), firstDate.getMonth(), 1),
             );
           }
+        }
+      })
+      .catch((requestError: Error) => {
+        setSlotsError(requestError.message);
+        if (requestError.message.toLowerCase().includes("token")) {
+          clearAuthSession();
+          router.push(`/login?redirect=/book/${params.clinicId}`);
         }
       })
       .finally(() => setLoadingSlots(false));
@@ -64,14 +131,32 @@ export default function EnhancedBookingPage({
     new Set(
       slots
         .filter((s) => !s.isBooked)
-        .map((s) => new Date(s.startTime).toISOString().split("T")[0]),
+        .map((s) => dateKey(new Date(s.startTime))),
     ),
   );
 
   const filteredSlots = slots.filter(
-    (slot) =>
-      new Date(slot.startTime).toISOString().split("T")[0] === selectedDate,
+    (slot) => dateKey(new Date(slot.startTime)) === selectedDate,
   );
+
+  const today = new Date();
+  const todayKey = dateKey(today);
+  const appointmentCalendarDays = calendarDays(appointmentMonth);
+  const dobCalendarDays = calendarDays(dobMonth);
+  const birthYears = Array.from(
+    { length: today.getFullYear() - 1900 + 1 },
+    (_, index) => today.getFullYear() - index,
+  );
+
+  const changeMonth = (
+    currentMonth: Date,
+    setMonth: (month: Date) => void,
+    offset: number,
+  ) => {
+    setMonth(
+      new Date(currentMonth.getFullYear(), currentMonth.getMonth() + offset, 1),
+    );
+  };
 
   // Auth Guard & Hold Action
   const handleHoldSlot = async (slot: Slot) => {
@@ -124,6 +209,17 @@ export default function EnhancedBookingPage({
     if (!selectedSlot) return;
     const token = localStorage.getItem("jwt_token");
 
+    if (
+      !patientDetails.phone ||
+      !patientDetails.dateOfBirth ||
+      !patientDetails.reason.trim()
+    ) {
+      alert(
+        "Please complete your phone number, date of birth, and appointment reason.",
+      );
+      return;
+    }
+
     setConfirming(true);
     try {
       const res = await fetch(`${API_URL}/bookings`, {
@@ -133,7 +229,12 @@ export default function EnhancedBookingPage({
           "x-clinic-id": params.clinicId,
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ slotId: selectedSlot.id }),
+        body: JSON.stringify({
+          slotId: selectedSlot.id,
+          patientPhone: patientDetails.phone,
+          patientDateOfBirth: patientDetails.dateOfBirth,
+          patientReason: patientDetails.reason,
+        }),
       });
 
       if (res.ok) {
@@ -173,6 +274,7 @@ export default function EnhancedBookingPage({
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-6 md:p-12 max-w-5xl mx-auto">
+      <PortalHeader />
       <header className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-extrabold bg-gradient-to-r from-teal-400 to-blue-500 bg-clip-text text-transparent">
@@ -184,12 +286,20 @@ export default function EnhancedBookingPage({
         </div>
       </header>
 
-      {/* Step 1: Custom Date Selector Bar */}
+      {/* Step 1: Appointment calendar */}
       <section className="mb-8">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-2">
-          <CalendarIcon className="w-4 h-4 text-teal-400" /> Select Consultation
-          Date
-        </h3>
+        <div className="mb-3">
+          <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-300">
+            <CalendarIcon className="h-4 w-4 text-teal-400" />
+            <span>Appointment date</span>
+            <span className="text-red-400" aria-hidden="true">
+              *
+            </span>
+          </h3>
+          <p className="mt-1 text-xs text-slate-500">
+            Choose a date with available consultation times.
+          </p>
+        </div>
 
         {loadingSlots ? (
           <div className="flex gap-3 overflow-x-auto pb-2">
@@ -200,6 +310,10 @@ export default function EnhancedBookingPage({
               />
             ))}
           </div>
+        ) : slotsError ? (
+          <div className="p-6 bg-slate-900 border border-red-900/50 rounded-2xl text-center text-red-300 text-sm">
+            {slotsError}
+          </div>
         ) : availableDates.length === 0 ? (
           <div className="p-6 bg-slate-900 border border-slate-800 rounded-2xl text-center">
             <AlertCircle className="w-8 h-8 text-amber-500 mx-auto mb-2" />
@@ -208,30 +322,73 @@ export default function EnhancedBookingPage({
             </p>
           </div>
         ) : (
-          <div className="flex gap-3 overflow-x-auto pb-2">
-            {availableDates.map((dateStr) => {
-              const d = new Date(dateStr);
-              const isSelected = selectedDate === dateStr;
-
-              return (
-                <button
-                  key={dateStr}
-                  onClick={() => setSelectedDate(dateStr)}
-                  className={`px-5 py-3 rounded-2xl border text-center transition-all flex-shrink-0 ${
-                    isSelected
-                      ? "bg-teal-950/80 border-teal-500 text-teal-200 ring-2 ring-teal-500/20"
-                      : "bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700"
-                  }`}
-                >
-                  <div className="text-xs uppercase font-medium">
-                    {d.toLocaleDateString([], { weekday: "short" })}
-                  </div>
-                  <div className="text-lg font-bold text-slate-100">
-                    {d.getDate()} {d.toLocaleDateString([], { month: "short" })}
-                  </div>
-                </button>
-              );
-            })}
+          <div className="max-w-xl rounded-3xl border border-slate-800 bg-slate-900 p-4 shadow-xl shadow-black/20">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <button
+                type="button"
+                aria-label="Previous month"
+                onClick={() =>
+                  changeMonth(appointmentMonth, setAppointmentMonth, -1)
+                }
+                className="rounded-xl border border-slate-700 p-2 text-slate-400 hover:border-teal-500 hover:text-teal-300"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <div className="text-center">
+                <p className="text-sm font-semibold text-slate-100">
+                  {monthTitle(appointmentMonth)}
+                </p>
+                <p className="mt-1 text-[11px] text-teal-400">
+                  {availableDates.length} dates available
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="Next month"
+                onClick={() =>
+                  changeMonth(appointmentMonth, setAppointmentMonth, 1)
+                }
+                className="rounded-xl border border-slate-700 p-2 text-slate-400 hover:border-teal-500 hover:text-teal-300"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="mt-4 grid grid-cols-7 gap-1 text-center text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
+                <span key={day}>{day}</span>
+              ))}
+            </div>
+            <div className="mt-2 grid grid-cols-7 gap-1">
+              {appointmentCalendarDays.map((day, index) => {
+                if (!day)
+                  return (
+                    <span key={`empty-${index}`} className="aspect-square" />
+                  );
+                const key = dateKey(day);
+                const available = availableDates.includes(key);
+                const selected = selectedDate === key;
+                return (
+                  <button
+                    type="button"
+                    key={key}
+                    disabled={!available}
+                    onClick={() => setSelectedDate(key)}
+                    className={`relative aspect-square rounded-xl text-sm transition ${
+                      selected
+                        ? "bg-teal-400 font-bold text-slate-950 shadow-lg shadow-teal-500/20"
+                        : available
+                          ? "bg-slate-800 text-slate-100 hover:bg-teal-950 hover:text-teal-300"
+                          : "cursor-not-allowed text-slate-700"
+                    }`}
+                  >
+                    {day.getDate()}
+                    {available && !selected && (
+                      <span className="absolute bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-teal-400" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
       </section>
@@ -315,9 +472,9 @@ export default function EnhancedBookingPage({
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="p-6 bg-slate-900 border border-teal-500/40 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4 shadow-2xl"
+            className="p-6 bg-slate-900 border border-teal-500/40 rounded-2xl flex flex-col items-stretch gap-6 shadow-2xl"
           >
-            <div>
+            <div className="border-b border-slate-800 pb-4">
               <p className="font-semibold text-teal-400 flex items-center gap-2">
                 <Lock className="w-4 h-4" /> Slot Reserved Exclusively For You
               </p>
@@ -330,10 +487,208 @@ export default function EnhancedBookingPage({
               </p>
             </div>
 
+            <div className="w-full space-y-5">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-100">
+                  Patient details
+                </h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  Please provide the information the clinic needs for your
+                  appointment.
+                </p>
+              </div>
+              <label className="space-y-2 text-xs font-semibold text-slate-300">
+                <span>
+                  Phone number{" "}
+                  <span className="text-red-400" aria-hidden="true">
+                    *
+                  </span>
+                </span>
+                <input
+                  required
+                  type="tel"
+                  placeholder="e.g. +234 801 234 5678"
+                  value={patientDetails.phone}
+                  onChange={(event) =>
+                    setPatientDetails({
+                      ...patientDetails,
+                      phone: event.target.value,
+                    })
+                  }
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm font-normal text-slate-100 outline-none placeholder:text-slate-600 focus:border-teal-500"
+                />
+              </label>
+              <div className="relative space-y-2 text-xs font-semibold text-slate-300">
+                <span>
+                  Date of birth{" "}
+                  <span className="text-red-400" aria-hidden="true">
+                    *
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setDobPickerOpen((open) => !open)}
+                  className="flex w-full items-center justify-between rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-left text-sm font-normal text-slate-100 outline-none hover:border-teal-500"
+                >
+                  <span
+                    className={
+                      patientDetails.dateOfBirth
+                        ? "text-slate-100"
+                        : "text-slate-600"
+                    }
+                  >
+                    {patientDetails.dateOfBirth
+                      ? dateFromKey(
+                          patientDetails.dateOfBirth,
+                        ).toLocaleDateString([], {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                        })
+                      : "Choose your birth date"}
+                  </span>
+                  <CalendarIcon className="h-4 w-4 text-teal-400" />
+                </button>
+                {dobPickerOpen && (
+                  <div className="absolute left-0 top-full z-20 mt-2 w-full min-w-[280px] rounded-2xl border border-slate-700 bg-slate-900 p-3 shadow-2xl">
+                    <div className="flex items-center justify-between gap-2 pb-3">
+                      <button
+                        type="button"
+                        aria-label="Previous birth month"
+                        onClick={() => changeMonth(dobMonth, setDobMonth, -1)}
+                        className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-teal-300"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </button>
+                      <div className="flex min-w-0 gap-2">
+                        <select
+                          aria-label="Birth month"
+                          value={dobMonth.getMonth()}
+                          onChange={(event) =>
+                            setDobMonth(
+                              new Date(
+                                dobMonth.getFullYear(),
+                                Number(event.target.value),
+                                1,
+                              ),
+                            )
+                          }
+                          className="min-w-0 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] font-semibold text-slate-100 outline-none focus:border-teal-500"
+                        >
+                          {monthNames.map((month, index) => (
+                            <option
+                              key={month}
+                              value={index}
+                              disabled={
+                                dobMonth.getFullYear() ===
+                                  today.getFullYear() &&
+                                index > today.getMonth()
+                              }
+                            >
+                              {month}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          aria-label="Birth year"
+                          value={dobMonth.getFullYear()}
+                          onChange={(event) =>
+                            setDobMonth(
+                              new Date(
+                                Number(event.target.value),
+                                dobMonth.getMonth(),
+                                1,
+                              ),
+                            )
+                          }
+                          className="w-20 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] font-semibold text-slate-100 outline-none focus:border-teal-500"
+                        >
+                          {birthYears.map((year) => (
+                            <option key={year} value={year}>
+                              {year}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <button
+                        type="button"
+                        aria-label="Next birth month"
+                        disabled={
+                          dobMonth.getFullYear() === today.getFullYear() &&
+                          dobMonth.getMonth() === today.getMonth()
+                        }
+                        onClick={() => changeMonth(dobMonth, setDobMonth, 1)}
+                        className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-teal-300 disabled:opacity-30"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-7 gap-1 text-center text-[9px] uppercase text-slate-600">
+                      {["S", "M", "T", "W", "T", "F", "S"].map((day, index) => (
+                        <span key={`${day}-${index}`}>{day}</span>
+                      ))}
+                    </div>
+                    <div className="mt-2 grid grid-cols-7 gap-1">
+                      {dobCalendarDays.map((day, index) => {
+                        if (!day)
+                          return (
+                            <span
+                              key={`dob-empty-${index}`}
+                              className="aspect-square"
+                            />
+                          );
+                        const key = dateKey(day);
+                        const future = key > todayKey;
+                        const selected = patientDetails.dateOfBirth === key;
+                        return (
+                          <button
+                            type="button"
+                            key={key}
+                            disabled={future}
+                            onClick={() => {
+                              setPatientDetails({
+                                ...patientDetails,
+                                dateOfBirth: key,
+                              });
+                              setDobPickerOpen(false);
+                            }}
+                            className={`aspect-square rounded-lg text-xs ${selected ? "bg-teal-400 font-bold text-slate-950" : future ? "text-slate-700" : "text-slate-300 hover:bg-slate-800 hover:text-teal-300"}`}
+                          >
+                            {day.getDate()}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <label className="space-y-2 text-xs font-semibold text-slate-300">
+                <span>
+                  Reason for visit{" "}
+                  <span className="text-red-400" aria-hidden="true">
+                    *
+                  </span>
+                </span>
+                <input
+                  required
+                  type="text"
+                  placeholder="What would you like help with?"
+                  value={patientDetails.reason}
+                  onChange={(event) =>
+                    setPatientDetails({
+                      ...patientDetails,
+                      reason: event.target.value,
+                    })
+                  }
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm font-normal text-slate-100 outline-none placeholder:text-slate-600 focus:border-teal-500"
+                />
+              </label>
+            </div>
+
             <button
               onClick={handleConfirmBooking}
               disabled={confirming}
-              className="w-full sm:w-auto px-6 py-3 bg-gradient-to-r from-teal-500 to-blue-600 font-semibold text-slate-950 rounded-xl hover:brightness-110 flex items-center justify-center gap-2"
+              className="w-full px-6 py-3 bg-gradient-to-r from-teal-500 to-blue-600 font-semibold text-slate-950 rounded-xl hover:brightness-110 flex items-center justify-center gap-2"
             >
               {confirming ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
