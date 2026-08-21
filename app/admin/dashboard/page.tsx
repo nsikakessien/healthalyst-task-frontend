@@ -191,7 +191,7 @@ export default function AdminDashboard() {
           <Radio
             className={`w-3.5 h-3.5 ${connected ? "text-emerald-400" : "text-slate-600"}`}
           />
-          {connected ? "Live updates" : "Connecting..."}
+          Live Updates
         </div>
       </header>
 

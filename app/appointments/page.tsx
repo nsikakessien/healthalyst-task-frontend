@@ -95,9 +95,7 @@ export default function AppointmentsPage() {
             <Radio
               className={`h-3.5 w-3.5 ${realtimeConnected ? "text-emerald-400" : "text-slate-600"}`}
             />
-            {realtimeConnected
-              ? "Live appointment status updates"
-              : "Connecting to live updates..."}
+            Live appointment status updates
           </div>
         </div>
 
