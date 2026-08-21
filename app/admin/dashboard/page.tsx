@@ -44,8 +44,8 @@ export default function AdminDashboard() {
   const socketUrl =
     process.env.NEXT_PUBLIC_SOCKET_URL || apiUrl.replace(/\/api\/v1\/?$/, "");
 
-  const fetchBookings = () => {
-    setLoading(true);
+  const fetchBookings = (showLoading = true) => {
+    if (showLoading) setLoading(true);
     const token = localStorage.getItem("jwt_token");
 
     fetch(
@@ -105,7 +105,12 @@ export default function AdminDashboard() {
                 : [booking, ...current];
             });
           });
+          const refreshInterval = window.setInterval(
+            () => fetchBookings(false),
+            5000,
+          );
           return () => {
+            window.clearInterval(refreshInterval);
             socket.close();
           };
         }
