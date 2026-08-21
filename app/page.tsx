@@ -13,8 +13,20 @@ interface Clinic {
 
 export default function LandingPage() {
   const [clinics, setClinics] = useState<Clinic[]>([]);
+  const [user, setUser] = useState<{
+    name: string;
+    role: "PATIENT" | "ADMIN";
+  } | null>(null);
 
   useEffect(() => {
+    const storedUser = localStorage.getItem("user");
+    if (storedUser) {
+      try {
+        setUser(JSON.parse(storedUser));
+      } catch {
+        localStorage.removeItem("user");
+      }
+    }
     const token = localStorage.getItem("jwt_token");
 
     fetch(
@@ -36,19 +48,35 @@ export default function LandingPage() {
         <div className="text-xl font-bold bg-gradient-to-r from-teal-400 to-blue-500 bg-clip-text text-transparent">
           PulseBook
         </div>
-        <div className="space-x-4">
-          <Link
-            href="/login"
-            className="px-4 py-2 text-sm rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700"
-          >
-            Sign In
-          </Link>
-          <Link
-            href="/admin/dashboard"
-            className="px-4 py-2 text-sm rounded-lg bg-teal-500 text-slate-950 font-semibold hover:bg-teal-400"
-          >
-            Admin Portal
-          </Link>
+        <div className="flex items-center gap-3">
+          {user ? (
+            <>
+              <span className="hidden text-xs text-slate-400 sm:inline">
+                Signed in as {user.name}
+              </span>
+              <Link
+                href={user.role === "ADMIN" ? "/admin/dashboard" : "/clinics"}
+                className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-teal-400"
+              >
+                {user.role === "ADMIN" ? "Admin Dashboard" : "Patient Portal"}
+              </Link>
+            </>
+          ) : (
+            <>
+              <Link
+                href="/login?portal=patient&redirect=/clinics"
+                className="rounded-lg border border-slate-800 bg-slate-900 px-4 py-2 text-sm hover:border-slate-700"
+              >
+                Sign In
+              </Link>
+              <Link
+                href="/login?portal=admin&redirect=/admin/dashboard"
+                className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-teal-400"
+              >
+                Admin Portal
+              </Link>
+            </>
+          )}
         </div>
       </header>
 

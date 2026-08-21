@@ -11,7 +11,11 @@ interface UserSession {
   role: "PATIENT" | "ADMIN";
 }
 
-export default function PortalHeader() {
+export default function PortalHeader({
+  showBack = true,
+}: {
+  showBack?: boolean;
+}) {
   const [user, setUser] = useState<UserSession | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
   const router = useRouter();
@@ -46,15 +50,17 @@ export default function PortalHeader() {
   return (
     <header className="mb-8 flex items-center justify-between gap-4 border-b border-slate-800 pb-5">
       <div className="flex items-center gap-4">
-        <button
-          type="button"
-          onClick={() => router.back()}
-          aria-label="Go back"
-          title="Go back"
-          className="rounded-lg border border-slate-700 p-2 text-slate-400 hover:border-teal-500 hover:text-teal-300"
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </button>
+        {showBack && (
+          <button
+            type="button"
+            onClick={() => router.back()}
+            aria-label="Go back"
+            title="Go back"
+            className="rounded-lg border border-slate-700 p-2 text-slate-400 hover:border-teal-500 hover:text-teal-300"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+        )}
         <Link
           href={user?.role === "ADMIN" ? "/admin/dashboard" : "/clinics"}
           className="text-lg font-bold text-teal-400"
@@ -64,9 +70,19 @@ export default function PortalHeader() {
       </div>
       <div className="flex items-center gap-4">
         {user && (
-          <span className="hidden text-xs text-slate-400 sm:inline">
-            {user.name} · {user.role === "ADMIN" ? "Admin" : "Patient"}
-          </span>
+          <>
+            <span className="hidden text-xs text-slate-400 sm:inline">
+              {user.name} · {user.role === "ADMIN" ? "Admin" : "Patient"}
+            </span>
+            {user.role === "PATIENT" && (
+              <Link
+                href="/appointments"
+                className="text-xs font-semibold text-slate-300 hover:text-teal-300"
+              >
+                My appointments
+              </Link>
+            )}
+          </>
         )}
         <button
           type="button"

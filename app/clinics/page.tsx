@@ -10,6 +10,7 @@ import {
   Calendar,
   Lock,
   ArrowRight,
+  X,
   Loader2,
   ShieldAlert,
 } from "lucide-react";
@@ -127,7 +128,7 @@ export default function ProtectedClinicsPage() {
   // 2. Full Clinic Directory View (When Authenticated)
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-6 md:p-12 max-w-6xl mx-auto">
-      <PortalHeader />
+      <PortalHeader showBack={false} />
       <header className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-extrabold bg-gradient-to-r from-teal-400 to-blue-500 bg-clip-text text-transparent">
@@ -146,8 +147,19 @@ export default function ProtectedClinicsPage() {
             placeholder="Search by clinic or specialty..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-10 pr-4 py-2 text-sm text-slate-200 focus:outline-none focus:border-teal-500"
+            className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-10 pr-10 py-2 text-sm text-slate-200 focus:outline-none focus:border-teal-500"
           />
+          {search && (
+            <button
+              type="button"
+              aria-label="Clear clinic search"
+              title="Clear search"
+              onClick={() => setSearch("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-teal-400"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
         </div>
       </header>
 

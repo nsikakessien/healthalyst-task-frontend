@@ -27,9 +27,28 @@ interface Slot {
 }
 
 interface PatientDetails {
+  email: string;
   phone: string;
   dateOfBirth: string;
   reason: string;
+}
+
+interface FieldErrors {
+  email?: string;
+  phone?: string;
+  dateOfBirth?: string;
+  reason?: string;
+}
+
+interface ConfirmedBooking {
+  id: string;
+  status: string;
+  patientEmail: string;
+  patientPhone: string;
+  patientReason: string;
+  clinic: { name: string };
+  slot: { startTime: string; endTime: string };
+  emailSent: boolean;
 }
 
 const padDatePart = (value: number) => value.toString().padStart(2, "0");
@@ -77,12 +96,21 @@ export default function EnhancedBookingPage({
   const [holding, setHolding] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [bookingSuccess, setBookingSuccess] = useState(false);
+  const [confirmedBooking, setConfirmedBooking] =
+    useState<ConfirmedBooking | null>(null);
   const [slotsError, setSlotsError] = useState("");
   const [appointmentMonth, setAppointmentMonth] = useState(new Date());
   const [dobMonth, setDobMonth] = useState(new Date());
   const [dobPickerOpen, setDobPickerOpen] = useState(false);
   const [pendingSlot, setPendingSlot] = useState<Slot | null>(null);
+  const [clinicName, setClinicName] = useState("Clinic");
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [modal, setModal] = useState<{ title: string; message: string } | null>(
+    null,
+  );
   const [patientDetails, setPatientDetails] = useState<PatientDetails>({
+    email: "",
     phone: "",
     dateOfBirth: "",
     reason: "",
@@ -96,6 +124,26 @@ export default function EnhancedBookingPage({
   useEffect(() => {
     setLoadingSlots(true);
     const token = localStorage.getItem("jwt_token");
+    const storedUser = localStorage.getItem("user");
+    let userId: string | null = null;
+    if (storedUser) {
+      try {
+        userId = JSON.parse(storedUser).id || null;
+      } catch {
+        userId = null;
+      }
+    }
+    setCurrentUserId(userId);
+    if (storedUser) {
+      try {
+        setPatientDetails((current) => ({
+          ...current,
+          email: JSON.parse(storedUser).email || "",
+        }));
+      } catch {
+        // The authentication guard handles malformed sessions.
+      }
+    }
     fetch(`${API_URL}/clinics/${params.clinicId}/slots`, {
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -106,16 +154,37 @@ export default function EnhancedBookingPage({
         return data;
       })
       .then((data: Slot[]) => {
-        setSlots(Array.isArray(data) ? data : []);
-        if (data.length > 0) {
-          const firstAvailable = data.find((s) => !s.isBooked);
-          if (firstAvailable) {
-            const firstDate = new Date(firstAvailable.startTime);
-            setSelectedDate(dateKey(firstDate));
-            setAppointmentMonth(
-              new Date(firstDate.getFullYear(), firstDate.getMonth(), 1),
-            );
-          }
+        const loadedSlots = Array.isArray(data) ? data : [];
+        setSlots(loadedSlots);
+        const now = Date.now();
+        const ownHold = loadedSlots.find(
+          (slot) =>
+            !slot.isBooked &&
+            slot.lockedBy === userId &&
+            slot.lockedUntil &&
+            new Date(slot.lockedUntil).getTime() > now,
+        );
+        const firstAvailable =
+          ownHold ||
+          loadedSlots.find(
+            (slot) =>
+              !slot.isBooked &&
+              (!slot.lockedUntil ||
+                new Date(slot.lockedUntil).getTime() <= now),
+          );
+        if (ownHold) {
+          const remainingSeconds = Math.ceil(
+            (new Date(ownHold.lockedUntil!).getTime() - now) / 1000,
+          );
+          setSelectedSlot(ownHold);
+          setHoldTimer(remainingSeconds);
+        }
+        if (firstAvailable) {
+          const firstDate = new Date(firstAvailable.startTime);
+          setSelectedDate(dateKey(firstDate));
+          setAppointmentMonth(
+            new Date(firstDate.getFullYear(), firstDate.getMonth(), 1),
+          );
         }
       })
       .catch((requestError: Error) => {
@@ -126,13 +195,33 @@ export default function EnhancedBookingPage({
         }
       })
       .finally(() => setLoadingSlots(false));
+
+    fetch(`${API_URL}/clinics`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        const clinic = Array.isArray(data)
+          ? data.find(
+              (item: { id: string; name: string }) =>
+                item.id === params.clinicId,
+            )
+          : null;
+        if (clinic) setClinicName(clinic.name);
+      });
   }, [params.clinicId, API_URL]);
 
   // Extract dates that have available slots
   const availableDates = Array.from(
     new Set(
       slots
-        .filter((s) => !s.isBooked)
+        .filter(
+          (slot) =>
+            !slot.isBooked &&
+            (!slot.lockedUntil ||
+              new Date(slot.lockedUntil).getTime() <= Date.now() ||
+              slot.lockedBy === currentUserId),
+        )
         .map((s) => dateKey(new Date(s.startTime))),
     ),
   );
@@ -184,6 +273,11 @@ export default function EnhancedBookingPage({
       const data = await res.json();
 
       if (res.ok) {
+        const heldSlot = {
+          ...slot,
+          lockedBy: currentUserId,
+          lockedUntil: data.slot.lockedUntil,
+        };
         setSlots((currentSlots) =>
           currentSlots.map((currentSlot) => {
             if (currentSlot.id === selectedSlot?.id) {
@@ -195,13 +289,23 @@ export default function EnhancedBookingPage({
             return currentSlot;
           }),
         );
-        setSelectedSlot(slot);
-        setHoldTimer(300); // 5-minute lock countdown
+        setSelectedSlot(heldSlot);
+        setHoldTimer(
+          Math.ceil(
+            (new Date(data.slot.lockedUntil).getTime() - Date.now()) / 1000,
+          ),
+        );
       } else {
-        alert(data.error);
+        setModal({
+          title: "Slot unavailable",
+          message: data.error || "This slot could not be held.",
+        });
       }
     } catch (err) {
-      alert("Failed to lock slot.");
+      setModal({
+        title: "Unable to hold slot",
+        message: "Please check your connection and try again.",
+      });
     } finally {
       setHolding(false);
     }
@@ -231,14 +335,26 @@ export default function EnhancedBookingPage({
     if (!selectedSlot) return;
     const token = localStorage.getItem("jwt_token");
 
-    if (
-      !patientDetails.phone ||
-      !patientDetails.dateOfBirth ||
-      !patientDetails.reason.trim()
-    ) {
-      alert(
-        "Please complete your phone number, date of birth, and appointment reason.",
-      );
+    const nextErrors: FieldErrors = {};
+    const normalizedEmail = patientDetails.email.trim().toLowerCase();
+    if (!normalizedEmail) nextErrors.email = "Enter your email address.";
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail))
+      nextErrors.email = "Enter a valid email address.";
+    const normalizedPhone = patientDetails.phone.replace(/[\s().-]/g, "");
+    const isNigerianPhone = /^(?:0[789][01]\d{8}|\+234[789][01]\d{8})$/.test(
+      normalizedPhone,
+    );
+    if (!patientDetails.phone.trim())
+      nextErrors.phone = "Enter your phone number.";
+    else if (!isNigerianPhone)
+      nextErrors.phone =
+        "Enter a valid Nigerian number, e.g. 08012345678 or +2348012345678.";
+    if (!patientDetails.dateOfBirth)
+      nextErrors.dateOfBirth = "Select your date of birth.";
+    if (!patientDetails.reason.trim())
+      nextErrors.reason = "Tell us the reason for your visit.";
+    setFieldErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) {
       return;
     }
 
@@ -253,6 +369,7 @@ export default function EnhancedBookingPage({
         },
         body: JSON.stringify({
           slotId: selectedSlot.id,
+          patientEmail: patientDetails.email,
           patientPhone: patientDetails.phone,
           patientDateOfBirth: patientDetails.dateOfBirth,
           patientReason: patientDetails.reason,
@@ -260,11 +377,27 @@ export default function EnhancedBookingPage({
       });
 
       if (res.ok) {
+        const booking = await res.json();
+        setConfirmedBooking({
+          ...booking,
+          patientEmail: booking.patient.email,
+          patientPhone: booking.patientPhone,
+          patientReason: booking.patientReason,
+          emailSent: booking.emailSent,
+        });
         setBookingSuccess(true);
       } else {
         const data = await res.json();
-        alert(data.error);
+        setModal({
+          title: "Booking could not be confirmed",
+          message: data.error || "Please try again.",
+        });
       }
+    } catch {
+      setModal({
+        title: "Booking could not be confirmed",
+        message: "Please check your connection and try again.",
+      });
     } finally {
       setConfirming(false);
     }
@@ -279,12 +412,46 @@ export default function EnhancedBookingPage({
           className="max-w-md text-center p-8 bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl"
         >
           <CheckCircle2 className="w-16 h-16 text-emerald-400 mx-auto mb-4" />
-          <h2 className="text-2xl font-bold">Appointment Confirmed!</h2>
+          <h2 className="text-2xl font-bold">Appointment Request Submitted</h2>
           <p className="text-slate-400 text-sm mt-2">
-            Your booking has been registered on the admin portal dashboard.
+            Your appointment is pending admin review.{" "}
+            {confirmedBooking?.emailSent
+              ? "A confirmation email was sent to your account email."
+              : "Email notifications are not configured in this environment."}
           </p>
+          {confirmedBooking && (
+            <div className="mt-6 space-y-3 rounded-2xl border border-slate-800 bg-slate-950 p-4 text-left text-sm">
+              <div className="flex justify-between gap-4">
+                <span className="text-slate-500">Clinic</span>
+                <strong>{confirmedBooking.clinic.name}</strong>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-slate-500">Date</span>
+                <strong>
+                  {new Date(
+                    confirmedBooking.slot.startTime,
+                  ).toLocaleDateString()}
+                </strong>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-slate-500">Time</span>
+                <strong>
+                  {new Date(confirmedBooking.slot.startTime).toLocaleTimeString(
+                    [],
+                    { hour: "numeric", minute: "2-digit" },
+                  )}
+                </strong>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-slate-500">Reason</span>
+                <strong className="text-right">
+                  {confirmedBooking.patientReason}
+                </strong>
+              </div>
+            </div>
+          )}
           <button
-            onClick={() => router.push("/")}
+            onClick={() => router.push("/clinics")}
             className="mt-6 px-6 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm font-semibold hover:bg-slate-700"
           >
             Back to Home
@@ -299,6 +466,9 @@ export default function EnhancedBookingPage({
       <PortalHeader />
       <header className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-teal-400">
+            {clinicName}
+          </p>
           <h1 className="text-3xl font-extrabold bg-gradient-to-r from-teal-400 to-blue-500 bg-clip-text text-transparent">
             Book Consultation Slot
           </h1>
@@ -344,7 +514,7 @@ export default function EnhancedBookingPage({
             </p>
           </div>
         ) : (
-          <div className="max-w-xl rounded-3xl border border-slate-800 bg-slate-900 p-4 shadow-xl shadow-black/20">
+          <div className="max-w-sm rounded-2xl border border-slate-800 bg-slate-900 p-3 shadow-xl shadow-black/20">
             <div className="flex items-center justify-between border-b border-slate-800 pb-4">
               <button
                 type="button"
@@ -375,7 +545,7 @@ export default function EnhancedBookingPage({
                 <ChevronRight className="h-4 w-4" />
               </button>
             </div>
-            <div className="mt-4 grid grid-cols-7 gap-1 text-center text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+            <div className="mt-3 grid grid-cols-7 gap-1 text-center text-[9px] font-semibold uppercase tracking-wider text-slate-600">
               {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
                 <span key={day}>{day}</span>
               ))}
@@ -395,7 +565,7 @@ export default function EnhancedBookingPage({
                     key={key}
                     disabled={!available}
                     onClick={() => setSelectedDate(key)}
-                    className={`relative aspect-square rounded-xl text-sm transition ${
+                    className={`relative aspect-square rounded-lg text-xs transition ${
                       selected
                         ? "bg-teal-400 font-bold text-slate-950 shadow-lg shadow-teal-500/20"
                         : available
@@ -521,6 +691,39 @@ export default function EnhancedBookingPage({
               </div>
               <label className="space-y-2 text-xs font-semibold text-slate-300">
                 <span>
+                  Email address{" "}
+                  <span className="text-red-400" aria-hidden="true">
+                    *
+                  </span>
+                </span>
+                <input
+                  required
+                  type="email"
+                  value={patientDetails.email}
+                  onChange={(event) => {
+                    setPatientDetails({
+                      ...patientDetails,
+                      email: event.target.value,
+                    });
+                    setFieldErrors((current) => ({
+                      ...current,
+                      email: undefined,
+                    }));
+                  }}
+                  placeholder="you@example.com"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm font-normal text-slate-100 outline-none placeholder:text-slate-600 focus:border-teal-500"
+                />
+                <span className="block text-[11px] font-normal text-slate-500">
+                  Appointment notifications will be sent to this email.
+                </span>
+                {fieldErrors.email && (
+                  <span className="block text-xs font-normal text-red-400">
+                    {fieldErrors.email}
+                  </span>
+                )}
+              </label>
+              <label className="space-y-2 text-xs font-semibold text-slate-300">
+                <span>
                   Phone number{" "}
                   <span className="text-red-400" aria-hidden="true">
                     *
@@ -531,14 +734,23 @@ export default function EnhancedBookingPage({
                   type="tel"
                   placeholder="e.g. +234 801 234 5678"
                   value={patientDetails.phone}
-                  onChange={(event) =>
+                  onChange={(event) => {
                     setPatientDetails({
                       ...patientDetails,
                       phone: event.target.value,
-                    })
-                  }
+                    });
+                    setFieldErrors((current) => ({
+                      ...current,
+                      phone: undefined,
+                    }));
+                  }}
                   className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm font-normal text-slate-100 outline-none placeholder:text-slate-600 focus:border-teal-500"
                 />
+                {fieldErrors.phone && (
+                  <span className="block text-xs font-normal text-red-400">
+                    {fieldErrors.phone}
+                  </span>
+                )}
               </label>
               <div className="relative space-y-2 text-xs font-semibold text-slate-300">
                 <span>
@@ -572,7 +784,7 @@ export default function EnhancedBookingPage({
                   <CalendarIcon className="h-4 w-4 text-teal-400" />
                 </button>
                 {dobPickerOpen && (
-                  <div className="absolute left-0 top-full z-20 mt-2 w-full min-w-[280px] rounded-2xl border border-slate-700 bg-slate-900 p-3 shadow-2xl">
+                  <div className="absolute left-0 top-full z-20 mt-2 w-full max-w-[250px] rounded-2xl border border-slate-700 bg-slate-900 p-2 shadow-2xl">
                     <div className="flex items-center justify-between gap-2 pb-3">
                       <button
                         type="button"
@@ -672,6 +884,10 @@ export default function EnhancedBookingPage({
                                 ...patientDetails,
                                 dateOfBirth: key,
                               });
+                              setFieldErrors((current) => ({
+                                ...current,
+                                dateOfBirth: undefined,
+                              }));
                               setDobPickerOpen(false);
                             }}
                             className={`aspect-square rounded-lg text-xs ${selected ? "bg-teal-400 font-bold text-slate-950" : future ? "text-slate-700" : "text-slate-300 hover:bg-slate-800 hover:text-teal-300"}`}
@@ -682,6 +898,11 @@ export default function EnhancedBookingPage({
                       })}
                     </div>
                   </div>
+                )}
+                {fieldErrors.dateOfBirth && (
+                  <span className="block text-xs font-normal text-red-400">
+                    {fieldErrors.dateOfBirth}
+                  </span>
                 )}
               </div>
               <label className="space-y-2 text-xs font-semibold text-slate-300">
@@ -696,14 +917,23 @@ export default function EnhancedBookingPage({
                   type="text"
                   placeholder="What would you like help with?"
                   value={patientDetails.reason}
-                  onChange={(event) =>
+                  onChange={(event) => {
                     setPatientDetails({
                       ...patientDetails,
                       reason: event.target.value,
-                    })
-                  }
+                    });
+                    setFieldErrors((current) => ({
+                      ...current,
+                      reason: undefined,
+                    }));
+                  }}
                   className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm font-normal text-slate-100 outline-none placeholder:text-slate-600 focus:border-teal-500"
                 />
+                {fieldErrors.reason && (
+                  <span className="block text-xs font-normal text-red-400">
+                    {fieldErrors.reason}
+                  </span>
+                )}
               </label>
             </div>
 
@@ -796,6 +1026,47 @@ export default function EnhancedBookingPage({
                   {holding ? "Switching..." : "Switch time slot"}
                 </button>
               </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {modal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/80 p-6 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="booking-message-title"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 12, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 12, scale: 0.96 }}
+              className="w-full max-w-sm rounded-3xl border border-slate-700 bg-slate-900 p-6 shadow-2xl"
+            >
+              <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-2xl bg-red-400/10 text-red-300">
+                <AlertCircle className="h-5 w-5" />
+              </div>
+              <h2
+                id="booking-message-title"
+                className="text-lg font-bold text-slate-100"
+              >
+                {modal.title}
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-slate-400">
+                {modal.message}
+              </p>
+              <button
+                type="button"
+                onClick={() => setModal(null)}
+                className="mt-6 w-full rounded-xl bg-teal-400 px-4 py-2.5 text-sm font-semibold text-slate-950 hover:bg-teal-300"
+              >
+                Okay
+              </button>
             </motion.div>
           </motion.div>
         )}

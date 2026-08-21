@@ -14,6 +14,7 @@ export function middleware(request: NextRequest) {
   const isProtectedPath =
     pathname.startsWith("/clinics") ||
     pathname.startsWith("/book") ||
+    pathname.startsWith("/appointments") ||
     isAdminPath;
 
   if (token) {
@@ -78,5 +79,11 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/clinics/:path*", "/book/:path*", "/admin/:path*", "/login"],
+  matcher: [
+    "/clinics/:path*",
+    "/book/:path*",
+    "/appointments/:path*",
+    "/admin/:path*",
+    "/login",
+  ],
 };
