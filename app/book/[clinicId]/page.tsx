@@ -417,7 +417,7 @@ export default function EnhancedBookingPage({
             Your appointment is pending admin review.{" "}
             {confirmedBooking?.emailSent
               ? "A confirmation email was sent to your account email."
-              : "Email notifications are not configured in this environment."}
+              : ""}
           </p>
           {confirmedBooking && (
             <div className="mt-6 space-y-3 rounded-2xl border border-slate-800 bg-slate-950 p-4 text-left text-sm">
