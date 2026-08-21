@@ -22,6 +22,7 @@ interface Slot {
   startTime: string;
   endTime: string;
   isBooked: boolean;
+  lockedBy: string | null;
   lockedUntil: string | null;
 }
 
@@ -80,6 +81,7 @@ export default function EnhancedBookingPage({
   const [appointmentMonth, setAppointmentMonth] = useState(new Date());
   const [dobMonth, setDobMonth] = useState(new Date());
   const [dobPickerOpen, setDobPickerOpen] = useState(false);
+  const [pendingSlot, setPendingSlot] = useState<Slot | null>(null);
   const [patientDetails, setPatientDetails] = useState<PatientDetails>({
     phone: "",
     dateOfBirth: "",
@@ -159,7 +161,7 @@ export default function EnhancedBookingPage({
   };
 
   // Auth Guard & Hold Action
-  const handleHoldSlot = async (slot: Slot) => {
+  const holdSlot = async (slot: Slot) => {
     const token = localStorage.getItem("jwt_token");
 
     // Redirect unauthenticated users immediately
@@ -182,6 +184,17 @@ export default function EnhancedBookingPage({
       const data = await res.json();
 
       if (res.ok) {
+        setSlots((currentSlots) =>
+          currentSlots.map((currentSlot) => {
+            if (currentSlot.id === selectedSlot?.id) {
+              return { ...currentSlot, lockedBy: null, lockedUntil: null };
+            }
+            if (currentSlot.id === slot.id) {
+              return { ...currentSlot, lockedUntil: data.slot.lockedUntil };
+            }
+            return currentSlot;
+          }),
+        );
         setSelectedSlot(slot);
         setHoldTimer(300); // 5-minute lock countdown
       } else {
@@ -192,6 +205,15 @@ export default function EnhancedBookingPage({
     } finally {
       setHolding(false);
     }
+  };
+
+  const handleHoldSlot = (slot: Slot) => {
+    if (selectedSlot?.id === slot.id) return;
+    if (selectedSlot && holdTimer !== null && holdTimer > 0) {
+      setPendingSlot(slot);
+      return;
+    }
+    void holdSlot(slot);
   };
 
   // Timer countdown hook
@@ -696,6 +718,85 @@ export default function EnhancedBookingPage({
                 "Confirm Booking"
               )}
             </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {pendingSlot && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-6 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="switch-slot-title"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 12, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 12, scale: 0.96 }}
+              className="w-full max-w-md rounded-3xl border border-slate-700 bg-slate-900 p-6 shadow-2xl"
+            >
+              <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-400/10 text-amber-300">
+                <CalendarIcon className="h-5 w-5" />
+              </div>
+              <h2
+                id="switch-slot-title"
+                className="text-xl font-bold text-slate-100"
+              >
+                Switch appointment time?
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-slate-400">
+                You already hold a time slot. Switching will release your
+                current hold and reserve the newly selected time instead.
+              </p>
+              <div className="mt-5 grid gap-3 rounded-2xl border border-slate-800 bg-slate-950 p-4 text-sm">
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-slate-500">Current hold</span>
+                  <span className="font-semibold text-slate-200">
+                    {selectedSlot &&
+                      new Date(selectedSlot.startTime).toLocaleString([], {
+                        weekday: "short",
+                        hour: "numeric",
+                        minute: "2-digit",
+                      })}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-slate-500">New time</span>
+                  <span className="font-semibold text-teal-300">
+                    {new Date(pendingSlot.startTime).toLocaleString([], {
+                      weekday: "short",
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                </div>
+              </div>
+              <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setPendingSlot(null)}
+                  className="rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-semibold text-slate-300 hover:border-slate-500"
+                >
+                  Keep current time
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextSlot = pendingSlot;
+                    setPendingSlot(null);
+                    void holdSlot(nextSlot);
+                  }}
+                  disabled={holding}
+                  className="rounded-xl bg-teal-400 px-4 py-2.5 text-sm font-semibold text-slate-950 hover:bg-teal-300 disabled:cursor-wait disabled:opacity-60"
+                >
+                  {holding ? "Switching..." : "Switch time slot"}
+                </button>
+              </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>

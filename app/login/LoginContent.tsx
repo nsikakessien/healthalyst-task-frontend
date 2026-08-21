@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Eye, EyeOff } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff } from "lucide-react";
 
 export default function LoginContent() {
   const [email, setEmail] = useState("patient@demo.com");
@@ -64,6 +64,12 @@ export default function LoginContent() {
         <h2 className="text-2xl font-bold text-center">
           {isAdminPortal ? "Admin Portal Sign In" : "Patient Portal Sign In"}
         </h2>
+        <Link
+          href="/"
+          className="flex items-center justify-center gap-2 text-xs text-slate-500 hover:text-teal-400"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" /> Back to home
+        </Link>
         {error && (
           <div className="p-3 bg-red-950/50 text-red-400 text-xs rounded-xl">
             {error}
