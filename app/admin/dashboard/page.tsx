@@ -39,6 +39,10 @@ export default function AdminDashboard() {
   );
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const router = useRouter();
+  const apiUrl =
+    process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api/v1";
+  const socketUrl =
+    process.env.NEXT_PUBLIC_SOCKET_URL || apiUrl.replace(/\/api\/v1\/?$/, "");
 
   const fetchBookings = () => {
     setLoading(true);
@@ -84,12 +88,12 @@ export default function AdminDashboard() {
           setClinicName(user.name);
           fetchBookings();
 
-          const socket = io(
-            process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:5000",
-            { auth: { token: localStorage.getItem("jwt_token") } },
-          );
+          const socket = io(socketUrl, {
+            auth: { token: localStorage.getItem("jwt_token") },
+          });
           socket.on("connect", () => setConnected(true));
           socket.on("disconnect", () => setConnected(false));
+          socket.on("connect_error", () => setConnected(false));
           socket.on("booking:updated", (booking: BookingRecord) => {
             if (!booking?.id || !booking.patient) return;
             setBookings((current) => {
@@ -110,7 +114,7 @@ export default function AdminDashboard() {
       }
     }
     setAuthorized((current) => current ?? false);
-  }, []);
+  }, [router, socketUrl]);
 
   const updateStatus = async (
     booking: BookingRecord,
